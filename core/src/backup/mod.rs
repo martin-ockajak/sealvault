@@ -184,11 +184,11 @@ mod tests {
                     eth::ChainId::default_wallet_chain(),
                 )?;
                 // Uses SK-KEK to decrypt
-                m::Address::fetch_eth_signing_key(
+                let encrypted_secret_key = m::Address::fetch_encrypted_secret_key(
                     &mut tx_conn,
-                    self.resources.keychain(),
                     &address_id,
-                )
+                )?;
+                encrypted_secret_key.decrypt(self.resources.keychain())
             })?;
             Ok(())
         }

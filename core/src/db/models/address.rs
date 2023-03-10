@@ -14,6 +14,7 @@ use diesel::{
     sqlite::Sqlite,
     SqliteConnection,
 };
+use ethers::types::Res;
 use generic_array::{typenum::U2, GenericArray};
 use typed_builder::TypedBuilder;
 
@@ -27,11 +28,13 @@ use crate::{
         },
         DeferredTxConnection, JsonValue,
     },
-    encryption::{KeyEncryptionKey, KeyName, Keychain},
+    encryption::{DataEncryptionKey as EncDek, KeyEncryptionKey, KeyName, Keychain},
     protocols::{eth, BlockchainProtocol},
     utils::rfc3339_timestamp,
     Error,
 };
+use crate::db::schema::local_encrypted_deks::{encrypted_dek, kek_name};
+use crate::encryption::EncryptionOutput;
 
 #[derive(Clone, Debug, PartialEq, Eq, Queryable, Identifiable)]
 #[diesel(primary_key(deterministic_id))]
@@ -456,11 +459,10 @@ impl Address {
         Ok(profile_id)
     }
 
-    pub fn fetch_eth_signing_key(
+    pub fn fetch_encrypted_secret_key(
         tx_conn: &mut DeferredTxConnection,
-        keychain: &Keychain,
         address_id: &AddressId,
-    ) -> Result<eth::SigningKey, Error> {
+    ) -> Result<EncryptedSecretKey, Error> {
         use addresses::dsl as a;
         use asymmetric_keys::dsl as ak;
         use chains::dsl as c;
@@ -468,7 +470,7 @@ impl Address {
 
         use crate::encryption::EncryptionOutput;
 
-        let (dek_name, encrypted_der, protocol_data) = asymmetric_keys::table
+        let (dek_name, encrypted_secret_key, protocol_data) = asymmetric_keys::table
             .inner_join(
                 addresses::table.on(ak::deterministic_id.eq(a::asymmetric_key_id)),
             )
@@ -481,19 +483,19 @@ impl Address {
             .select((dek::name, ak::encrypted_der, c::protocol_data))
             .first::<(String, EncryptionOutput, JsonValue)>(tx_conn.as_mut())?;
 
-        let protocol_data: eth::ProtocolData = protocol_data.convert_into()?;
+        let eth::ProtocolData { chain_id, .. } = protocol_data.convert_into()?;
         let dek_name = KeyName::from_str(&dek_name).map_err(|_| Error::Fatal {
             error: format!("Unknown DEK name: {dek_name}"),
         })?;
 
-        let sk_kek = KeyEncryptionKey::sk_kek(keychain)?;
-        let (_, sk_dek) =
-            DataEncryptionKey::fetch_dek(tx_conn.as_mut(), dek_name, &sk_kek)?;
-        let key =
-            eth::EthereumAsymmetricKey::from_encrypted_der(&encrypted_der, &sk_dek)?;
-        let signing_key = eth::SigningKey::new(key, protocol_data.chain_id)?;
-
-        Ok(signing_key)
+        let (_, encrypted_dek) =
+             DataEncryptionKey::fetch_encrypted_dek(tx_conn.as_mut(), dek_name, KeyName::SkKeyEncryptionKey.as_ref())?;
+        Ok(EncryptedSecretKey {
+            encrypted_secret_key,
+            chain_id,
+            encrypted_dek,
+            dek_name,
+        })
     }
 
     pub fn fetch_eth_chain_id(
@@ -672,6 +674,26 @@ impl ToSql<Text, Sqlite> for AddressId {
         out.set_value(s);
         Ok(diesel::serialize::IsNull::No)
     }
+}
+
+pub struct EncryptedSecretKey {
+    pub encrypted_secret_key: EncryptionOutput,
+    pub chain_id: eth::ChainId,
+    pub encrypted_dek: EncryptionOutput,
+    pub dek_name: KeyName,
+}
+
+impl EncryptedSecretKey {
+
+  /// Decrypt this encrypted secret key into a signing key
+  pub fn decrypt(&self, keychain: &Keychain) -> Result<eth::SigningKey, Error> {
+    let sk_kek = KeyEncryptionKey::sk_kek(keychain)?;
+    let sk_dek =
+      EncDek::from_encrypted(self.dek_name, &self.encrypted_dek, &sk_kek)?;
+    let decrypted_secret_key =
+      eth::EthereumAsymmetricKey::from_encrypted_der(&self.encrypted_secret_key, &sk_dek)?;
+    eth::SigningKey::new(decrypted_secret_key, self.chain_id)
+  }
 }
 
 #[cfg(test)]

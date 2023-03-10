@@ -40,6 +40,31 @@ impl DataEncryptionKey {
         Ok(results)
     }
 
+    /// Fetch a DEK from the DB by name.
+    /// Returns the DEK id and the encrypted DEK.
+    pub fn fetch_encrypted_dek(
+        connection: &mut SqliteConnection,
+        dek_name: KeyName,
+        kek_name: &str,
+    ) -> Result<(DeterministicId, EncryptionOutput), Error> {
+        use data_encryption_keys::dsl as dek;
+        use local_encrypted_deks::dsl as led;
+
+        let (dek_id, encrypted_dek) = data_encryption_keys::table
+          .inner_join(
+              local_encrypted_deks::table.on(dek::deterministic_id.eq(led::dek_id)),
+          )
+          .filter(
+              dek::name
+                .eq(dek_name.as_ref())
+                .and(led::kek_name.eq(kek_name)),
+          )
+          .select((dek::deterministic_id, led::encrypted_dek))
+          .first::<(DeterministicId, EncryptionOutput)>(connection)?;
+
+        Ok((dek_id, encrypted_dek))
+    }
+
     /// Fetch a DEK from the DB by name and decrypt it.
     /// Returns the DEK id and the decrypted DEK.
     pub fn fetch_dek(
@@ -47,21 +72,7 @@ impl DataEncryptionKey {
         dek_name: KeyName,
         kek: &KeyEncryptionKey,
     ) -> Result<(DeterministicId, EncDek), Error> {
-        use data_encryption_keys::dsl as dek;
-        use local_encrypted_deks::dsl as led;
-
-        let (dek_id, encrypted_dek) = data_encryption_keys::table
-            .inner_join(
-                local_encrypted_deks::table.on(dek::deterministic_id.eq(led::dek_id)),
-            )
-            .filter(
-                dek::name
-                    .eq(dek_name.as_ref())
-                    .and(led::kek_name.eq(kek.name())),
-            )
-            .select((dek::deterministic_id, led::encrypted_dek))
-            .first::<(DeterministicId, EncryptionOutput)>(connection)?;
-
+        let (dek_id, encrypted_dek) = Self::fetch_encrypted_dek(connection, dek_name, kek.name())?;
         let dek = EncDek::from_encrypted(dek_name, &encrypted_dek, kek)?;
         Ok((dek_id, dek))
     }

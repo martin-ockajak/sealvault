@@ -27,7 +27,7 @@ use crate::{
             AddEthereumChainParameter, InPageRequest, InPageRequestParams,
             SwitchEthereumChainParameter,
         },
-        ChainId, ChainSettings, ChecksumAddress, RpcManagerI, Signer, SigningKey,
+        ChainId, ChainSettings, ChecksumAddress, RpcManagerI, Signer,
     },
     public_suffix_list::PublicSuffixList,
     resources::CoreResourcesI,
@@ -468,9 +468,8 @@ impl DappKeyProvider {
         &self,
         session: m::LocalDappSession,
     ) -> Result<(), Error> {
-        let resources = self.resources.clone();
         let session_clone = session.clone();
-        let (chain_settings, wallet_signing_key) = self
+        let (chain_settings, encrypted_wallet_signing_key) = self
             .connection_pool()
             .deferred_transaction_async(move |mut tx_conn| {
                 let wallet_address_id = m::Address::fetch_eth_wallet_id(
@@ -482,19 +481,18 @@ impl DappKeyProvider {
                     tx_conn.as_mut(),
                     session.chain_id,
                 )?;
-                let wallet_signing_key = m::Address::fetch_eth_signing_key(
+                let encrypted_wallet_signing_key = m::Address::fetch_encrypted_secret_key(
                     &mut tx_conn,
-                    resources.keychain(),
                     &wallet_address_id,
                 )?;
-                Ok((chain_settings, wallet_signing_key))
+                Ok((chain_settings, encrypted_wallet_signing_key))
             })
             .await?;
         // Call blockchain API in background.
         rt::spawn(Self::make_default_dapp_allotment_transfer(
             self.resources.clone(),
             chain_settings,
-            wallet_signing_key,
+            encrypted_wallet_signing_key,
             session_clone,
         ));
         Ok(())
@@ -503,17 +501,17 @@ impl DappKeyProvider {
     async fn make_default_dapp_allotment_transfer(
         resources: Arc<dyn CoreResourcesI>,
         chain_settings: ChainSettings,
-        wallet_signing_key: SigningKey,
+        encrypted_wallet_signing_key: m::EncryptedSecretKey,
         session: m::LocalDappSession,
     ) -> Result<(), Error> {
         let provider = resources
             .rpc_manager()
-            .eth_api_provider(wallet_signing_key.chain_id);
+            .eth_api_provider(encrypted_wallet_signing_key.chain_id);
         // Call fails if there are insufficient funds.
         let res = async {
             let tx_hash = provider
                 .transfer_native_token_async(
-                    &wallet_signing_key,
+                    &encrypted_wallet_signing_key,
                     session.address,
                     &chain_settings.default_dapp_allotment,
                 )
@@ -831,20 +829,19 @@ impl DappKeyProvider {
     async fn fetch_eth_signing_key(
         &self,
         session: m::LocalDappSession,
-    ) -> Result<(m::LocalDappSession, SigningKey), Error> {
+    ) -> Result<(m::LocalDappSession, m::EncryptedSecretKey), Error> {
         let resources = self.resources.clone();
-        let (session, signing_key) = self
+        let (session, encrypted_secret_key) = self
             .connection_pool()
             .deferred_transaction_async(move |mut tx_conn| {
-                let signing_key = m::Address::fetch_eth_signing_key(
+                let encrypted_secret_key = m::Address::fetch_encrypted_secret_key(
                     &mut tx_conn,
-                    resources.keychain(),
                     &session.address_id,
                 )?;
-                Ok((session, signing_key))
+                Ok((session, encrypted_secret_key))
             })
             .await?;
-        Ok((session, signing_key))
+        Ok((session, encrypted_secret_key))
     }
 
     async fn fetch_favicon(&self) -> Result<Option<Vec<u8>>, Error> {

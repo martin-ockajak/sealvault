@@ -512,8 +512,8 @@ fn fetch_eth_signing_key_for_transfer(
     resources: &dyn CoreResourcesI,
     from_address_id: &m::AddressId,
     to_address: eth::ChecksumAddress,
-) -> Result<eth::SigningKey, Error> {
-    let signing_key = resources.connection_pool().deferred_transaction(
+) -> Result<m::EncryptedSecretKey, Error> {
+    let encrypted_secret_key = resources.connection_pool().deferred_transaction(
         |mut tx_conn| {
             // Returns NotFoundError if the address is not in the db.
             let from_profile_id =
@@ -533,14 +533,10 @@ fn fetch_eth_signing_key_for_transfer(
                 })?;
             }
 
-            m::Address::fetch_eth_signing_key(
-                &mut tx_conn,
-                resources.keychain(),
-                from_address_id,
-            )
+            m::Address::fetch_encrypted_secret_key(&mut tx_conn, from_address_id)
         },
     )?;
-    Ok(signing_key)
+    Ok(encrypted_secret_key)
 }
 
 fn token_transfer_callbacks(
@@ -1371,7 +1367,8 @@ pub mod tests {
                 &params_two,
             )?;
             let to_signing_key =
-                m::Address::fetch_eth_signing_key(&mut tx_conn, keychain, &to_id)?;
+                m::Address::fetch_encrypted_secret_key(&mut tx_conn, &to_id)?
+                  .decrypt(keychain)?;
 
             Ok((from_id, to_signing_key.address))
         })?;

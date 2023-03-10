@@ -24,7 +24,7 @@ pub use account::{Account, AccountEntity, AccountParams};
 #[allow(deprecated)]
 pub use account_picture::{AccountPicture, AccountPictureEntity};
 pub use address::{
-    Address, AddressEntity, AddressId, CreateEthAddressParams, ListAddressesForDappParams,
+    Address, AddressEntity, AddressId, CreateEthAddressParams, EncryptedSecretKey, ListAddressesForDappParams,
 };
 pub use asymmetric_key::{AsymmetricKey, NewAsymmetricKey};
 pub use chain::{Chain, EthChain};

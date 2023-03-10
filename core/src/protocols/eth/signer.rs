@@ -21,18 +21,19 @@ use k256::{FieldBytes, Secp256k1};
 use sha3::{Digest, Keccak256};
 
 use crate::{
+    db::models as m,
     protocols::eth::{chain_id::ChainId, signing_key::SigningKey, EthereumAsymmetricKey},
     signatures::RecoverableSignature,
     Error,
 };
 
 pub struct Signer<'a> {
-    signing_key: &'a SigningKey,
+    signing_key: &'a m::EncryptedSecretKey,
 }
 
 impl<'a> Signer<'a> {
-    pub fn new(signing_key: &'a SigningKey) -> Self {
-        Self { signing_key }
+    pub fn new(encrypted_signing_key: &'a m::EncryptedSecretKey) -> Self {
+        Self { signing_key: encrypted_signing_key }
     }
 
     /// The signing key's address.
@@ -154,8 +155,8 @@ pub(super) struct SignerMiddleware<'a> {
 }
 
 impl<'a> SignerMiddleware<'a> {
-    pub fn new(provider: &'a Provider<Http>, signing_key: &'a SigningKey) -> Self {
-        let signer = Signer::new(signing_key);
+    pub fn new(provider: &'a Provider<Http>, encrypted_signing_key: &'a m::EncryptedSecretKey) -> Self {
+        let signer = Signer::new(encrypted_signing_key);
         Self { provider, signer }
     }
 }

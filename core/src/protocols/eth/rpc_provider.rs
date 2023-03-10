@@ -17,6 +17,7 @@ use url::Url;
 
 use crate::{
     async_runtime as rt,
+    db::models as m,
     protocols::eth::{
         contracts::ERC20Contract, signer::SignerMiddleware, token::FungibleToken,
         ChainId, ChecksumAddress, FungibleTokenAmount, NativeTokenAmount, SigningKey,
@@ -73,10 +74,10 @@ impl RpcProvider {
 
     pub async fn send_transaction_async(
         &self,
-        signing_key: &SigningKey,
+        encrypted_signing_key: &m::EncryptedSecretKey,
         tx: TransactionRequest,
     ) -> Result<H256, Error> {
-        let signer = SignerMiddleware::new(&self.provider, signing_key);
+        let signer = SignerMiddleware::new(&self.provider, encrypted_signing_key);
         let pending_tx = signer
             .send_transaction(tx, Some(BlockId::Number(BlockNumber::Latest)))
             .await?;
@@ -85,15 +86,15 @@ impl RpcProvider {
 
     fn verify_chain_ids(
         &self,
-        signing_key: &SigningKey,
+        encrypted_signing_key: &m::EncryptedSecretKey,
         token_chain_id: ChainId,
     ) -> Result<(), Error> {
-        if signing_key.chain_id != self.chain_id || signing_key.chain_id != token_chain_id
+        if encrypted_signing_key.chain_id != self.chain_id || encrypted_signing_key.chain_id != token_chain_id
         {
             Err(Error::Fatal {
                 error: format!(
                     "Key, rpc provider and amount chain ids must match. Got {}, {} and {}",
-                    signing_key.chain_id, self.chain_id, token_chain_id
+                    encrypted_signing_key.chain_id, self.chain_id, token_chain_id
                 ),
             })
         } else {
@@ -105,12 +106,12 @@ impl RpcProvider {
     /// Returns the transaction hash that can be used to poll for the result.
     pub fn transfer_native_token(
         &self,
-        signing_key: &SigningKey,
+        encrypted_signing_key: &m::EncryptedSecretKey,
         to_checksum_address: ChecksumAddress,
         amount: &NativeTokenAmount,
     ) -> Result<H256, Error> {
         rt::block_on(self.transfer_native_token_async(
-            signing_key,
+            encrypted_signing_key,
             to_checksum_address,
             amount,
         ))
@@ -118,20 +119,20 @@ impl RpcProvider {
 
     pub async fn transfer_native_token_async(
         &self,
-        signing_key: &SigningKey,
+        encrypted_signing_key: &m::EncryptedSecretKey,
         to_address: ChecksumAddress,
         amount: &NativeTokenAmount,
     ) -> Result<H256, Error> {
-        self.verify_chain_ids(signing_key, amount.chain_id)?;
+        self.verify_chain_ids(encrypted_signing_key, amount.chain_id)?;
 
         // TODO use EIP-1559 once we can get reliable `max_priority_fee_per_gas` estimates on all
         // chains.
         let tx = TransactionRequest::new()
             .to(to_address.to_address())
             .value(amount.amount)
-            .from(signing_key.address.to_address());
+            .from(encrypted_signing_key.address.to_address());
 
-        let tx_hash = self.send_transaction_async(signing_key, tx).await?;
+        let tx_hash = self.send_transaction_async(encrypted_signing_key, tx).await?;
 
         Ok(tx_hash)
     }
